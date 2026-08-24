@@ -1,0 +1,90 @@
+/**
+ * Force Polylang login/register URLs per language
+ * and redirect after login to a specific URL per language
+ */
+
+// ── 1. Define your URLs here ──────────────────────────────────────────────────
+
+$language_urls = [
+    'el' => [
+        'login'      => 'https://adaptivemarketacademy.eu/el/σύνδεση/',
+        'register'   => 'https://adaptivemarketacademy.eu/el/εγγραφή/',
+        'after_login' => 'https://adaptivemarketacademy.eu/el/groups/πλατφόρμα/',
+    ],
+    'it' => [
+        'login'      => 'https://adaptivemarketacademy.eu/it/accedi/',
+        'register'   => 'https://adaptivemarketacademy.eu/it/registrati/',
+        'after_login' => 'https://adaptivemarketacademy.eu/it/groups/piattaforma/',
+    ],
+    'pl' => [
+        'login'      => 'https://adaptivemarketacademy.eu/pl/zaloguj-sie/',
+        'register'   => 'https://adaptivemarketacademy.eu/pl/zarejestruj-sie/',
+        'after_login' => 'https://adaptivemarketacademy.eu/pl/groups/platforma/',
+    ],
+    'pt' => [
+        'login'      => 'https://adaptivemarketacademy.eu/pt/iniciar-sessao/',
+        'register'   => 'https://adaptivemarketacademy.eu/pt/registro/',
+        'after_login' => 'https://adaptivemarketacademy.eu/pt/groups/plataforma/',
+    ],
+];
+
+// ── 2. Force login URL ────────────────────────────────────────────────────────
+
+add_filter( 'login_url', function( $url, $redirect, $force_reauth ) use ( $language_urls ) {
+    if ( ! function_exists( 'pll_current_language' ) ) return $url;
+
+    $lang = pll_current_language();
+    if ( isset( $language_urls[ $lang ]['login'] ) ) {
+        $login_url = $language_urls[ $lang ]['login'];
+        if ( $redirect ) {
+            $login_url = add_query_arg( 'redirect_to', urlencode( $redirect ), $login_url );
+        }
+        return $login_url;
+    }
+
+    return $url;
+}, 20, 3 );
+
+// ── 3. Force register URL ─────────────────────────────────────────────────────
+
+add_filter( 'register_url', function( $url ) use ( $language_urls ) {
+    if ( ! function_exists( 'pll_current_language' ) ) return $url;
+
+    $lang = pll_current_language();
+    if ( isset( $language_urls[ $lang ]['register'] ) ) {
+        return $language_urls[ $lang ]['register'];
+    }
+
+    return $url;
+}, 20 );
+
+// ── 4. Force UsersWP login/register URLs ──────────────────────────────────────
+
+add_filter( 'uwp_login_page_url',    function( $url ) use ( $language_urls ) {
+    if ( ! function_exists( 'pll_current_language' ) ) return $url;
+    $lang = pll_current_language();
+    return $language_urls[ $lang ]['login'] ?? $url;
+}, 20 );
+
+add_filter( 'uwp_register_page_url', function( $url ) use ( $language_urls ) {
+    if ( ! function_exists( 'pll_current_language' ) ) return $url;
+    $lang = pll_current_language();
+    return $language_urls[ $lang ]['register'] ?? $url;
+}, 20 );
+
+// ── 5. Redirect after login ───────────────────────────────────────────────────
+
+add_filter( 'login_redirect', function( $redirect_to, $requested_redirect_to, $user ) use ( $language_urls ) {
+    if ( ! function_exists( 'pll_current_language' ) ) return $redirect_to;
+    if ( is_wp_error( $user ) ) return $redirect_to;
+
+    // If there's already a specific redirect_to in the URL, honour it
+    if ( ! empty( $requested_redirect_to ) ) return $requested_redirect_to;
+
+    $lang = pll_current_language();
+    if ( isset( $language_urls[ $lang ]['after_login'] ) ) {
+        return $language_urls[ $lang ]['after_login'];
+    }
+
+    return $redirect_to;
+}, 20, 3 );

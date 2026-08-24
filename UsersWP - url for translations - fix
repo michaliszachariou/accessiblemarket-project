@@ -1,32 +1,43 @@
 /**
- * Force Polylang login/register URLs per language
- * and redirect after login to a specific URL per language
+ * Force Polylang login/register URLs per language,
+ * redirect after login to a specific URL per language,
+ * and keep the user on their language after logout.
  */
 
 // ── 1. Define your URLs here ──────────────────────────────────────────────────
 
-$language_urls = [
-    'el' => [
-        'login'      => 'https://adaptivemarketacademy.eu/el/σύνδεση/',
-        'register'   => 'https://adaptivemarketacademy.eu/el/εγγραφή/',
-        'after_login' => 'https://adaptivemarketacademy.eu/el/groups/πλατφόρμα/',
-    ],
-    'it' => [
-        'login'      => 'https://adaptivemarketacademy.eu/it/accedi/',
-        'register'   => 'https://adaptivemarketacademy.eu/it/registrati/',
-        'after_login' => 'https://adaptivemarketacademy.eu/it/groups/piattaforma/',
-    ],
-    'pl' => [
-        'login'      => 'https://adaptivemarketacademy.eu/pl/zaloguj-sie/',
-        'register'   => 'https://adaptivemarketacademy.eu/pl/zarejestruj-sie/',
-        'after_login' => 'https://adaptivemarketacademy.eu/pl/groups/platforma/',
-    ],
-    'pt' => [
-        'login'      => 'https://adaptivemarketacademy.eu/pt/iniciar-sessao/',
-        'register'   => 'https://adaptivemarketacademy.eu/pt/registro/',
-        'after_login' => 'https://adaptivemarketacademy.eu/pt/groups/plataforma/',
-    ],
-];
+function amc_language_urls() {
+    return [
+        'el' => [
+            'login'       => 'https://adaptivemarketacademy.eu/el/σύνδεση/',
+            'register'    => 'https://adaptivemarketacademy.eu/el/εγγραφή/',
+            'after_login' => 'https://adaptivemarketacademy.eu/el/groups/πλατφόρμα/',
+            // Leave 'after_logout' empty to use that language's home page.
+            'after_logout' => '',
+        ],
+        'it' => [
+            'login'       => 'https://adaptivemarketacademy.eu/it/accedi/',
+            'register'    => 'https://adaptivemarketacademy.eu/it/registrati/',
+            'after_login' => 'https://adaptivemarketacademy.eu/it/groups/piattaforma/',
+            'after_logout' => '',
+        ],
+        'pl' => [
+            'login'       => 'https://adaptivemarketacademy.eu/pl/zaloguj-sie/',
+            'register'    => 'https://adaptivemarketacademy.eu/pl/zarejestruj-sie/',
+            'after_login' => 'https://adaptivemarketacademy.eu/pl/groups/platforma/',
+            'after_logout' => '',
+        ],
+        'pt' => [
+            'login'       => 'https://adaptivemarketacademy.eu/pt/iniciar-sessao/',
+            'register'    => 'https://adaptivemarketacademy.eu/pt/registro/',
+            'after_login' => 'https://adaptivemarketacademy.eu/pt/groups/plataforma/',
+            'after_logout' => '',
+        ],
+    ];
+}
+
+// Keeps the original variable available for the closures below.
+$language_urls = amc_language_urls();
 
 // ── 2. Force login URL ────────────────────────────────────────────────────────
 
@@ -88,3 +99,134 @@ add_filter( 'login_redirect', function( $redirect_to, $requested_redirect_to, $u
 
     return $redirect_to;
 }, 20, 3 );
+
+// ── 6. Logout language helpers ────────────────────────────────────────────────
+
+/**
+ * Work out which Polylang language a front-end URL belongs to,
+ * by matching the first path segment against the registered language slugs.
+ */
+function amc_lang_from_url( $url ) {
+    if ( empty( $url ) || ! function_exists( 'pll_languages_list' ) ) {
+        return '';
+    }
+
+    $path = wp_parse_url( $url, PHP_URL_PATH );
+    if ( empty( $path ) ) {
+        return '';
+    }
+
+    // Strip the subdirectory WordPress lives in, if any.
+    $home_path = wp_parse_url( home_url( '/' ), PHP_URL_PATH );
+    if ( $home_path && $home_path !== '/' && 0 === strpos( $path, $home_path ) ) {
+        $path = substr( $path, strlen( $home_path ) );
+    }
+
+    $segment = strtok( trim( $path, '/' ), '/' );
+    if ( ! $segment ) {
+        return '';
+    }
+
+    $segment = strtolower( rawurldecode( $segment ) );
+    $slugs   = pll_languages_list( array( 'fields' => 'slug' ) );
+
+    return in_array( $segment, (array) $slugs, true ) ? $segment : '';
+}
+
+/**
+ * The URL a user of $lang should land on after logging out.
+ * Returns '' when we should leave the redirect alone (e.g. English / UsersWP).
+ */
+function amc_logout_url_for_lang( $lang ) {
+    if ( empty( $lang ) ) {
+        return '';
+    }
+
+    $language_urls = amc_language_urls();
+    if ( ! isset( $language_urls[ $lang ] ) ) {
+        return ''; // Not one of our languages — let UsersWP handle it.
+    }
+
+    if ( ! empty( $language_urls[ $lang ]['after_logout'] ) ) {
+        return $language_urls[ $lang ]['after_logout'];
+    }
+
+    // Default: that language's home page.
+    if ( function_exists( 'pll_home_url' ) ) {
+        return pll_home_url( $lang );
+    }
+
+    return home_url( '/' . $lang . '/' );
+}
+
+// ── 7. Stamp the current language onto every logout link ──────────────────────
+// This is the important part: on wp-login.php?action=logout Polylang can no
+// longer tell which language the user was browsing, so we record it here,
+// while the link is still being rendered on a translated front-end page.
+
+add_filter( 'logout_url', function( $logout_url, $redirect ) {
+    if ( ! function_exists( 'pll_current_language' ) ) return $logout_url;
+
+    $lang = pll_current_language();
+    if ( ! $lang ) {
+        return $logout_url;
+    }
+
+    $target = amc_logout_url_for_lang( $lang );
+    if ( ! $target ) {
+        return $logout_url; // English etc. — untouched, UsersWP decides.
+    }
+
+    // wp_nonce_url() has already run at this point and the 'log-out' nonce
+    // does not depend on the query string, so adding args here is safe.
+    $logout_url = remove_query_arg( 'redirect_to', $logout_url );
+
+    return add_query_arg( array(
+        'redirect_to' => urlencode( $target ),
+        'amc_lang'    => $lang,
+    ), $logout_url );
+}, 20, 2 );
+
+// ── 8. Honour that language when the logout actually happens ──────────────────
+// Priority 999 so this wins over the UsersWP "logout redirect" page setting.
+
+add_filter( 'logout_redirect', function( $redirect_to, $requested_redirect_to, $user ) {
+    $lang = '';
+
+    // a) The language we stamped on the logout link.
+    if ( ! empty( $_REQUEST['amc_lang'] ) ) {
+        $lang = sanitize_key( wp_unslash( $_REQUEST['amc_lang'] ) );
+    }
+
+    // b) Fallback: derive it from the requested redirect target.
+    if ( ! $lang && ! empty( $requested_redirect_to ) ) {
+        $lang = amc_lang_from_url( $requested_redirect_to );
+    }
+
+    // c) Fallback: derive it from the page the user clicked logout on.
+    if ( ! $lang && ! empty( $_SERVER['HTTP_REFERER'] ) ) {
+        $lang = amc_lang_from_url( esc_url_raw( wp_unslash( $_SERVER['HTTP_REFERER'] ) ) );
+    }
+
+    $target = amc_logout_url_for_lang( $lang );
+
+    return $target ? $target : $redirect_to;
+}, 999, 3 );
+
+// Same logic for UsersWP's own logout redirect filter, if the version in use
+// redirects internally instead of going through core's logout_redirect.
+add_filter( 'uwp_logout_redirect', function( $redirect_to ) {
+    $lang = '';
+
+    if ( ! empty( $_REQUEST['amc_lang'] ) ) {
+        $lang = sanitize_key( wp_unslash( $_REQUEST['amc_lang'] ) );
+    }
+
+    if ( ! $lang && ! empty( $_SERVER['HTTP_REFERER'] ) ) {
+        $lang = amc_lang_from_url( esc_url_raw( wp_unslash( $_SERVER['HTTP_REFERER'] ) ) );
+    }
+
+    $target = amc_logout_url_for_lang( $lang );
+
+    return $target ? $target : $redirect_to;
+}, 999 );
